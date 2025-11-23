@@ -1,21 +1,78 @@
 package main
 
 import (
-  "fmt"
+	"TEST/internal/config"
+	"TEST/internal/middleware"
+	"TEST/internal/proxy"
+	"TEST/internal/routes"
+	"context"
+	"github.com/gin-gonic/gin"
+	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 )
 
-//TIP <p>To run your code, right-click the code and select <b>Run</b>.</p> <p>Alternatively, click
-// the <icon src="AllIcons.Actions.Execute"/> icon in the gutter and select the <b>Run</b> menu item from here.</p>
-
 func main() {
-  //TIP <p>Press <shortcut actionId="ShowIntentionActions"/> when your caret is at the underlined text
-  // to see how GoLand suggests fixing the warning.</p><p>Alternatively, if available, click the lightbulb to view possible fixes.</p>
-  s := "gopher"
-  fmt.Printf("Hello and welcome, %s!\n", s)
+	cfg := config.Load()
+	if cfg.JWTSecret == "" {
+		log.Fatal("JWT_SECRET must be set")
+	}
 
-  for i := 1; i <= 5; i++ {
-	//TIP <p>To start your debugging session, right-click your code in the editor and select the Debug option.</p> <p>We have set one <icon src="AllIcons.Debugger.Db_set_breakpoint"/> breakpoint
-	// for you, but you can always add more by pressing <shortcut actionId="ToggleLineBreakpoint"/>.</p>
-	fmt.Println("i =", 100/i)
-  }
+	authProxy, err := proxy.NewReverseProxy(cfg.AuthServiceURL)
+	if err != nil {
+		log.Fatalf("failed to create auth proxy: %v", err)
+	}
+	userProxy, err := proxy.NewReverseProxy(cfg.UserServiceURL)
+	if err != nil {
+		log.Fatalf("failed to create user proxy: %v", err)
+	}
+	chatProxy, err := proxy.NewReverseProxy(cfg.ChatServiceURL)
+	if err != nil {
+		log.Fatalf("failed to create chat proxy: %v", err)
+	}
+	wsProxy, err := proxy.NewWebsocketProxy(cfg.ChatServiceURL)
+	if err != nil {
+		log.Fatalf("failed to create websocket proxy: %v", err)
+	}
+
+	router := gin.New()
+	router.Use(middleware.RequestID())
+	router.Use(middleware.Logger())
+	router.Use(middleware.Recovery())
+	router.Use(middleware.CORS())
+	router.Use(middleware.JWTAuth(cfg.JWTSecret))
+
+	routes.RegisterAuthRoutes(router, authProxy)
+	routes.RegisterUserRoutes(router, userProxy)
+	routes.RegisterChatRoutes(router, chatProxy, wsProxy)
+
+	router.NoRoute(func(c *gin.Context) {
+		c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+	})
+
+	srv := &http.Server{
+		Addr:    ":" + cfg.Port,
+		Handler: router,
+	}
+
+	go func() {
+		log.Printf("API Gateway listening on :%s", cfg.Port)
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatalf("listen: %s", err)
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatalf("server shutdown failed:%+v", err)
+	}
+	log.Println("server exiting")
 }

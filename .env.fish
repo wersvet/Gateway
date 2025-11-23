@@ -1,0 +1,1 @@
+set -gx JWT_SECRET "/2+XnmJGz1j3ehIVI/5P9kl+CghrE3DcS7rnT+qar5w"
