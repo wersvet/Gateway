@@ -15,5 +15,4 @@ func RegisterUserRoutes(r *gin.Engine, proxy *httputil.ReverseProxy) {
 	r.POST("/friends/requests/:id/accept", proxyHandler(proxy))
 	r.POST("/friends/requests/:id/reject", proxyHandler(proxy))
 	r.GET("/friends", proxyHandler(proxy))
-	r.DELETE("/friends/:id", proxyHandler(proxy))
 }
